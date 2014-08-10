@@ -1,0 +1,56 @@
+# Practical Machine Learning Assignment
+## Preparing dataset for prediction
+Assuming we have already download training dataset to working directory, training data is read as data frame `rawdata` and respectively. 
+```{r}
+rawdata <- read.csv("pml-training.csv")
+```
+
+The variable we want to predict is `classe` which has `A`, `B`, `C`, `D`, `E` five levels representing five different ways of exercise. Besides that, there are other 159 variables in data frame as candidates for building predicting model. `str(rawdata)` tells us some of variables are mostly recorded as `NA` which contribute little to prediction. As first step, these columns are identified and removed if the proportion of `NA` is above 0.5. However, there are still about 100 variables after this subtraction. Preprossing step like Principal Components Analysis is applied to further reduce the number of variables. To perform Principal Components Analysis, all `factor` variables are also deleted.
+```{r}
+library(caret)
+# Proportion of NA above 0.5 will be TRUE, otherwise will be FALSE
+logicVec <- apply(rawdata,2,function(x) 1-sum(is.na(x))/nrow(rawdata)>0.5)
+noNA <- rawdata[,logicVec]
+# all factor type variables are also eliminated except outcome because following PCA does not like them.
+logicVec2 <- sapply(noNA[,-ncol(noNA)], function(x) !is.factor(x))
+readydata <- noNA[,c(logicVec2, TRUE)]
+readydata <- readydata[,-1]
+set.seed(1111)
+inTrain <- createDataPartition(y=readydata$classe, p=0.7, list=FALSE)
+training <- readydata[inTrain,]
+test <- readydata[-inTrain,]
+```
+
+## Preprocess predictors
+Both `training` and `test` dataset are preprocessed with PCA. As a benchmark, 27 components are selected which indicates 95% variance is captured. Later we will discuss how the choice of the number of principal components affects accuracy of prediction.
+```{r}
+preProc <- preProcess(training[,-ncol(training)],method="pca",pcaComp=15)
+trainPC <- predict(preProc, training[,-ncol(training)])
+testPC <- predict(preProc, test[,-ncol(test)])
+```
+
+## Predict with random forest
+Since we sampled 70% of data as training set and 30% as test set manually, and we are going to resample a couple of times to do cross-validation, the method of `trainControl` is set to `none`.
+```{r}
+ctrl <- trainControl(method="none")
+modelFit <- train(training$classe~., method = "rf", data = trainPC, trControl=ctrl, tuneLength=1)
+confusionMatrix(test$classe, predict(modelFit, testPC))
+```
+
+## Cross validation
+As one way of cross-validation, random sampling is achieved by setting different seeds. For example, we set seed as `1111`, `2222`, `3333` and `4444` respectively and listed the out-of-sample error in the table below:
+
+|         seed        | 1111 | 2222  | 3333 | 4444  |
+|:-------------------:|------|-------|------|-------|
+| out-of-sample error | 0.021 | 0.02 | 0.023 | 0.027 |
+
+As shown above, random sampling only caused about 2% out-of-sample error. Therefore, we have confidence to conclude this prediction is very accurate.
+
+## Discussion
+During principal components analysis, we mentioned exploring the relationship between number of components and predicting performance. A sequence of numbers from 15 to 55 at step of 8 have been chosen as `pcaComp`. Note that seed is fixed to `1111`. The accuracy is listed below
+
+| pcaComp  | 55   | 47    | 39    | 31    | 23   | 15    |
+|----------|------|-------|-------|-------|------|-------|
+| accuracy | 0.982 | 0.981 | 0.98 | 0.978 | 0.977 | 0.968 |
+
+Even if we choose 15 components, we can still obtain 96.8% of accuracy. Increasing the number of components only gives us slight accuracy gain at the cost of predicting time. Thus, 27 components we chose is a good trade-off.
